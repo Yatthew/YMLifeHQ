@@ -589,6 +589,7 @@
       gap:6px;
     }
 
+    .editing-mode{display:inline-flex;padding:4px 7px;border-radius:999px;background:var(--green-soft);color:#4f7555;font-size:10px;font-weight:700;margin-left:4px}
     .footer{
       text-align:center;
       color:#888;
@@ -750,12 +751,12 @@
       <section id="daily">
         <div class="section-head">
           <div><h3>☀️ Tracker diario</h3></div>
-          <p>Una entrada por persona y día. Al guardar, se agrega una fila nueva en <strong>Daily_Activities</strong> del Google Sheets compartido.</p>
+          <p>Una ficha por persona y día. Si ya guardaste hoy, la web carga esa información para editarla y al volver a guardar <strong>actualiza la misma fila</strong> en Google Sheets.</p>
         </div>
         <div class="daily-grid">
           <div class="card">
             <h4 style="font-size:22px;margin:0 0 4px">Yani 🌻</h4>
-            <div style="font-size:12px;color:var(--muted)">Colombia 🇨🇴</div>
+            <div style="font-size:12px;color:var(--muted)">Colombia 🇨🇴 · <span id="dailyYaniMode">Nuevo registro de hoy</span></div>
             <div class="grid grid-2" style="margin-top:12px">
               <div class="field"><label>😴 Horas de sueño</label><input type="number" min="0" max="12" step="0.5" data-save="daily-y-sleep-hours" placeholder="8"></div>
               <div class="field"><label>🌙 Calidad del sueño (1–5)</label><input type="number" min="1" max="5" step="1" data-save="daily-y-sleep-quality" placeholder="4"></div>
@@ -768,11 +769,11 @@
               <label class="mini-check"><input type="checkbox" data-save="daily-y-space">🧺 Reset 15 min</label>
               <label class="mini-check"><input type="checkbox" data-save="daily-y-life">💛 Tiempo personal/familiar</label>
             </div>
-            <div class="remote-save"><button class="btn" onclick="saveDaily('Yani')">Guardar día en Sheets ✦</button><span class="save-result" id="dailyYResult"></span></div>
+            <div class="remote-save"><button class="btn" onclick="saveDaily('Yani')">Guardar / actualizar hoy ✦</button><span class="save-result" id="dailyYResult"></span></div>
           </div>
           <div class="card">
             <h4 style="font-size:22px;margin:0 0 4px">Matt ✦</h4>
-            <div style="font-size:12px;color:var(--muted)">Argentina 🇦🇷</div>
+            <div style="font-size:12px;color:var(--muted)">Argentina 🇦🇷 · <span id="dailyMattMode">Nuevo registro de hoy</span></div>
             <div class="grid grid-2" style="margin-top:12px">
               <div class="field"><label>😴 Horas de sueño</label><input type="number" min="0" max="12" step="0.5" data-save="daily-m-sleep-hours" placeholder="8"></div>
               <div class="field"><label>🌙 Calidad del sueño (1–5)</label><input type="number" min="1" max="5" step="1" data-save="daily-m-sleep-quality" placeholder="4"></div>
@@ -785,7 +786,7 @@
               <label class="mini-check"><input type="checkbox" data-save="daily-m-space">🧺 Reset 15 min</label>
               <label class="mini-check"><input type="checkbox" data-save="daily-m-life">💛 Tiempo personal/familiar</label>
             </div>
-            <div class="remote-save"><button class="btn" onclick="saveDaily('Matt')">Guardar día en Sheets ✦</button><span class="save-result" id="dailyMResult"></span></div>
+            <div class="remote-save"><button class="btn" onclick="saveDaily('Matt')">Guardar / actualizar hoy ✦</button><span class="save-result" id="dailyMResult"></span></div>
           </div>
         </div>
       </section>
@@ -1319,8 +1320,8 @@
     function saveDaily(person){
       const p = person === 'Yani' ? 'y' : 'm';
       const resultId = person === 'Yani' ? 'dailyYResult' : 'dailyMResult';
-      return runRemoteSave(resultId, () => sendToSheets('daily', [[
-        todayISO(), person,
+      const row = [[
+        ymDateColombiaGMT(), person,
         numberVal(`daily-${p}-sleep-hours`,0),
         numberVal(`daily-${p}-sleep-quality`,0),
         numberVal(`daily-${p}-move`,0),
@@ -1330,7 +1331,12 @@
         yesNo(boolLocal(`daily-${p}-life`)),
         val(`daily-${p}-note`,''),
         new Date().toISOString()
-      ]]));
+      ]];
+
+      return runRemoteSave(resultId, async () => {
+        await sendToSheets('daily_upsert', row);
+        setTimeout(loadSharedToday, 700);
+      });
     }
 
     function saveWeeklyCheckin(){
@@ -1497,6 +1503,39 @@
       return String(value).toLowerCase()==='yes' ? 'done' : 'notdone';
     }
 
+
+    function setDailyField(key, value, checkbox=false){
+      const el = document.querySelector(`[data-save="${key}"]`);
+      if(!el) return;
+      if(checkbox){
+        el.checked = String(value).toLowerCase() === 'yes';
+        localStorage.setItem('ymhq:' + key, el.checked);
+      } else {
+        el.value = value ?? '';
+        localStorage.setItem('ymhq:' + key, el.value);
+      }
+    }
+
+    function populateDailyForm(person, data){
+      if(!data) return;
+      const p = person === 'Yani' ? 'y' : 'm';
+
+      setDailyField(`daily-${p}-sleep-hours`, data.sleepHours || '');
+      setDailyField(`daily-${p}-sleep-quality`, data.sleepQuality || '');
+      setDailyField(`daily-${p}-move`, data.movementMin || '');
+      setDailyField(`daily-${p}-spirituality`, data.spirituality, true);
+      setDailyField(`daily-${p}-work`, data.workClosed, true);
+      setDailyField(`daily-${p}-space`, data.spaceReset, true);
+      setDailyField(`daily-${p}-life`, data.personalTime, true);
+      setDailyField(`daily-${p}-note`, data.notes || '');
+
+      const mode = document.getElementById(person === 'Yani' ? 'dailyYaniMode' : 'dailyMattMode');
+      if(mode){
+        mode.textContent = 'Editando registro guardado';
+        mode.className = 'editing-mode';
+      }
+    }
+
     function renderSharedPerson(person, data){
       const content=document.getElementById(`today${person}Content`);
       const sync=document.getElementById(`today${person}Sync`);
@@ -1561,8 +1600,12 @@
         });
         return;
       }
-      renderSharedPerson('Yani', payload.people && payload.people.Yani);
-      renderSharedPerson('Matt', payload.people && payload.people.Matt);
+      const yaniData = payload.people && payload.people.Yani;
+      const mattData = payload.people && payload.people.Matt;
+      renderSharedPerson('Yani', yaniData);
+      renderSharedPerson('Matt', mattData);
+      populateDailyForm('Yani', yaniData);
+      populateDailyForm('Matt', mattData);
     }
     window.sharedTodayCallback=sharedTodayCallback;
 
