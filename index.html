@@ -711,11 +711,11 @@
         </div>
         <div class="live-time-grid">
           <div class="live-clock-card">
-            <div class="live-clock-location"><strong>🇨🇴 Colombia</strong><span>Bogotá · hora base</span></div>
+            <div class="live-clock-location"><strong>🇨🇴 Colombia</strong><span>Bogotá · GMT-5 · en vivo</span></div>
             <div class="live-clock-time" id="clockColombia">--:--:--</div>
           </div>
           <div class="live-clock-card">
-            <div class="live-clock-location"><strong>🇦🇷 Argentina</strong><span>Buenos Aires · hora local</span></div>
+            <div class="live-clock-location"><strong>🇦🇷 Argentina</strong><span>Argentina · GMT-3 · en vivo</span></div>
             <div class="live-clock-time" id="clockArgentina">--:--:--</div>
           </div>
         </div>
@@ -1236,14 +1236,6 @@
         .replaceAll('"','&quot;')
         .replaceAll("'","&#039;");
     }
-        });
-        alert('Respaldo importado. La página se recargará para mostrar los datos.');
-        location.reload();
-      }catch(e){
-        alert('No pude importar ese archivo. Revisa que sea un respaldo JSON válido de Y&M Life HQ.');
-      }
-    }
-
     document.getElementById('saveWeekBtn').addEventListener('click', saveWeeklySnapshot);
     document.getElementById('historyMonth').addEventListener('change', renderHistory);
 
@@ -1392,7 +1384,12 @@
     updateSyncStatus();
 
 
-    // ---------- Horario vivo Colombia ↔ Argentina ----------
+    // ---------- Horario vivo usando Date + GMT fijo ----------
+    // Colombia = GMT-5
+    // Argentina = GMT-3
+    const GMT_COLOMBIA = -5;
+    const GMT_ARGENTINA = -3;
+
     const DAY_BLOCKS = [
       {id:'sleep',start:0,end:390,title:'😴 Dormir',note:'Todavía es hora de descanso. La meta es completar 8 horas.'},
       {id:'wake',start:390,end:420,title:'☀️ Despertar sin correr',note:'Agua, baño, tender la cama y empezar el día con calma.'},
@@ -1406,46 +1403,77 @@
       {id:'sleep',start:1320,end:1440,title:'🌙 Prepararse para dormir',note:'Bajar revoluciones. A las 10:30 p. m. Colombia / 12:30 a. m. Argentina la meta es estar dormidos.'}
     ];
 
-    function zoneParts(zone){
-      const ps = new Intl.DateTimeFormat('en-US',{timeZone:zone,hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).formatToParts(new Date());
-      const o={}; ps.forEach(p=>o[p.type]=p.value);
-      return {hour:Number(o.hour),minute:Number(o.minute),second:Number(o.second)};
+    function dateAtGMTOffset(offsetHours){
+      // Date() obtiene el instante real actual.
+      // Convertimos ese instante a UTC y luego aplicamos el GMT fijo deseado.
+      const now = new Date();
+      const utcMillis = now.getTime() + (now.getTimezoneOffset() * 60 * 1000);
+      return new Date(utcMillis + (offsetHours * 60 * 60 * 1000));
     }
 
-    function zoneClock(zone){
-      return new Intl.DateTimeFormat('es-CO',{timeZone:zone,hour:'numeric',minute:'2-digit',second:'2-digit',hour12:true}).format(new Date());
+    function pad2(n){
+      return String(n).padStart(2,'0');
+    }
+
+    function formatGMTClock(offsetHours){
+      const d = dateAtGMTOffset(offsetHours);
+
+      let h = d.getHours();
+      const m = pad2(d.getMinutes());
+      const s = pad2(d.getSeconds());
+      const suffix = h >= 12 ? 'p. m.' : 'a. m.';
+
+      h = h % 12;
+      if(h === 0) h = 12;
+
+      return `${h}:${m}:${s} ${suffix}`;
+    }
+
+    function colombiaDateParts(){
+      const d = dateAtGMTOffset(GMT_COLOMBIA);
+      return {
+        year: d.getFullYear(),
+        month: d.getMonth() + 1,
+        day: d.getDate(),
+        hour: d.getHours(),
+        minute: d.getMinutes(),
+        second: d.getSeconds()
+      };
     }
 
     function currentColombiaBlock(){
-      const t=zoneParts('America/Bogota');
-      const mins=t.hour*60+t.minute;
-      return DAY_BLOCKS.find(b=>mins>=b.start && mins<b.end) || DAY_BLOCKS[0];
+      const co = colombiaDateParts();
+      const minutes = co.hour * 60 + co.minute;
+      return DAY_BLOCKS.find(b => minutes >= b.start && minutes < b.end) || DAY_BLOCKS[0];
     }
 
     function updateLiveSchedule(){
-      const co=document.getElementById('clockColombia');
-      const ar=document.getElementById('clockArgentina');
-      if(!co||!ar) return;
+      const co = document.getElementById('clockColombia');
+      const ar = document.getElementById('clockArgentina');
+      if(!co || !ar) return;
 
-      co.textContent=zoneClock('America/Bogota');
-      ar.textContent=zoneClock('America/Argentina/Buenos_Aires');
+      co.textContent = formatGMTClock(GMT_COLOMBIA);
+      ar.textContent = formatGMTClock(GMT_ARGENTINA);
 
-      const block=currentColombiaBlock();
-      document.getElementById('currentBlockTitle').textContent=block.title;
-      document.getElementById('currentBlockNote').textContent=block.note;
+      const block = currentColombiaBlock();
+      document.getElementById('currentBlockTitle').textContent = block.title;
+      document.getElementById('currentBlockNote').textContent = block.note;
 
-      document.querySelectorAll('.routine-table tr[data-block]').forEach(row=>{
+      document.querySelectorAll('.routine-table tr[data-block]').forEach(row => {
         row.classList.remove('is-now');
-        const pill=row.querySelector('.now-pill');
-        if(pill) pill.remove();
-        if(row.dataset.block===block.id){
+
+        const oldPill = row.querySelector('.now-pill');
+        if(oldPill) oldPill.remove();
+
+        if(row.dataset.block === block.id){
           row.classList.add('is-now');
-          const cell=row.querySelector('td');
-          if(cell){
-            const badge=document.createElement('span');
-            badge.className='now-pill';
-            badge.innerHTML='<span class="now-dot"></span> AHORA';
-            cell.appendChild(badge);
+
+          const firstCell = row.querySelector('td');
+          if(firstCell){
+            const pill = document.createElement('span');
+            pill.className = 'now-pill';
+            pill.innerHTML = '<span class="now-dot"></span> AHORA';
+            firstCell.appendChild(pill);
           }
         }
       });
@@ -1456,12 +1484,9 @@
 
 
     // ---------- Vista compartida de hoy ----------
-    function ymDateInZone(zone){
-      const parts = new Intl.DateTimeFormat('en-CA',{
-        timeZone: zone, year:'numeric', month:'2-digit', day:'2-digit'
-      }).formatToParts(new Date());
-      const o={}; parts.forEach(p=>o[p.type]=p.value);
-      return `${o.year}-${o.month}-${o.day}`;
+    function ymDateColombiaGMT(){
+      const d = dateAtGMTOffset(GMT_COLOMBIA);
+      return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
     }
 
     function habitIcon(value){
@@ -1508,23 +1533,22 @@
 
     function formatLastUpdate(value){
       if(!value) return 'Hora no disponible';
-      const d = new Date(value);
-      if(Number.isNaN(d.getTime())) return String(value);
 
-      const dateText = new Intl.DateTimeFormat('es-CO',{
-        timeZone:'America/Bogota',
-        day:'numeric',
-        month:'short'
-      }).format(d);
+      const raw = new Date(value);
+      if(Number.isNaN(raw.getTime())) return String(value);
 
-      const timeText = new Intl.DateTimeFormat('es-CO',{
-        timeZone:'America/Bogota',
-        hour:'numeric',
-        minute:'2-digit',
-        hour12:true
-      }).format(d);
+      const utcMillis = raw.getTime() + (raw.getTimezoneOffset() * 60 * 1000);
+      const d = new Date(utcMillis + (GMT_COLOMBIA * 60 * 60 * 1000));
 
-      return `${dateText} · ${timeText} COL`;
+      const months = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+      const dateText = `${d.getDate()} ${months[d.getMonth()]}`;
+
+      let h = d.getHours();
+      const suffix = h >= 12 ? 'p. m.' : 'a. m.';
+      h = h % 12;
+      if(h === 0) h = 12;
+
+      return `${dateText} · ${h}:${pad2(d.getMinutes())} ${suffix} COL`;
     }
 
     function sharedTodayCallback(payload){
@@ -1557,7 +1581,7 @@
       const sep=REMOTE.APPS_SCRIPT_URL.includes('?')?'&':'?';
       const script=document.createElement('script');
       script.id='ymhq-shared-json-p';
-      script.src=`${REMOTE.APPS_SCRIPT_URL}${sep}action=today&date=${encodeURIComponent(ymDateInZone('America/Bogota'))}&callback=sharedTodayCallback&_=${Date.now()}`;
+      script.src=`${REMOTE.APPS_SCRIPT_URL}${sep}action=today&date=${encodeURIComponent(ymDateColombiaGMT())}&callback=sharedTodayCallback&_=${Date.now()}`;
       script.onerror=()=>sharedTodayCallback({ok:false});
       document.body.appendChild(script);
     }
@@ -1565,7 +1589,11 @@
     const refreshShared=document.getElementById('refreshSharedToday');
     if(refreshShared) refreshShared.addEventListener('click',loadSharedToday);
 
-    loadSharedToday();
+    try {
+      loadSharedToday();
+    } catch (err) {
+      console.warn('Y&M Life HQ: no se pudo cargar la vista compartida', err);
+    }
 
     updateResetDay();
   </script>
